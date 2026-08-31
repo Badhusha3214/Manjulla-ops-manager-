@@ -1,0 +1,12 @@
+node_modules/
+dist/
+
+# secrets — never commit
+bot/.env
+bot/service-account*.json
+worker/.dev.vars
+worker/.cf-token
+dashboard/.env.local
+dashboard/.env
+
+.wrangler/

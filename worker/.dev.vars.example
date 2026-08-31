@@ -1,0 +1,25 @@
+# Copy to .dev.vars for local `wrangler dev` (gitignored, never commit the real file).
+# In production these are set with `wrangler secret put <NAME>` instead.
+
+# The ID from your Google Sheet's URL — kept as a secret (not a [vars] entry
+# in wrangler.toml) so a public repo doesn't reveal which Sheet backs this.
+SHEET_ID=your-google-sheet-id-here
+
+GOOGLE_SERVICE_ACCOUNT_EMAIL=your-service-account@your-project.iam.gserviceaccount.com
+# Paste the private_key value from the service account JSON, with real
+# newlines escaped as \n (the JSON file already stores it exactly this way).
+GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMII...\n-----END PRIVATE KEY-----\n"
+
+# Optional: require dashboard requests to send `Authorization: Bearer <this value>`.
+# Leave unset for an open (but unguessable-URL-protected) read-only endpoint.
+DASHBOARD_API_KEY=
+
+# Same bot token as bot/.env's BOT_TOKEN — reminders DM through the same bot.
+TELEGRAM_BOT_TOKEN=
+
+# Same key as bot/.env's GEMINI_API_KEY, or a separate one — either works.
+GEMINI_API_KEY=
+
+# STALE_DAYS / DRY_RUN / GEMINI_MODEL are normally set as [vars] in
+# wrangler.toml, but can be overridden here per-developer, e.g. DRY_RUN=true
+# while testing locally so reminders log instead of actually sending.

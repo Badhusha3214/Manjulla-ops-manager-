@@ -1,0 +1,28 @@
+name = "devmorphix-ops-worker"
+main = "src/index.js"
+compatibility_date = "2024-09-01"
+
+# Non-secret config. Override per-environment below, or just edit these.
+[vars]
+ALLOWED_ORIGIN = "*"
+
+# Reminder cron settings (see the "scheduled" handler in src/index.js).
+STALE_DAYS = "3"
+DRY_RUN = "false"
+GEMINI_MODEL = "gemini-3.7-flash"
+
+# Daily reminder check — adjust the hour (UTC) to the team's morning.
+[triggers]
+crons = ["0 9 * * *"]
+
+# Secrets are NOT set here — they must never be committed. Set them with:
+#   wrangler secret put SHEET_ID            (kept out of [vars] so a public repo doesn't reveal which Sheet backs this)
+#   wrangler secret put GOOGLE_SERVICE_ACCOUNT_EMAIL
+#   wrangler secret put GOOGLE_PRIVATE_KEY
+#   wrangler secret put DASHBOARD_API_KEY   (optional)
+#   wrangler secret put TELEGRAM_BOT_TOKEN  (same value as bot/.env's BOT_TOKEN)
+#   wrangler secret put GEMINI_API_KEY      (same value as bot/.env's GEMINI_API_KEY, or a separate key)
+#
+# For local dev, put the same values in worker/.dev.vars instead
+# (see .dev.vars.example) — `wrangler dev` reads that file automatically
+# and it's gitignored.
