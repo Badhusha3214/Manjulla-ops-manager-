@@ -439,5 +439,13 @@ cron.schedule(CHECKIN_CRON, async () => {
   }
 });
 
-bot.start();
+// Not awaited: bot.start() only resolves when polling stops. A rejection
+// here (most commonly a 409 — Telegram still finalizing the previous
+// instance's connection during a redeploy) would otherwise crash as an
+// unhandled rejection with a raw stack trace; log it plainly instead and
+// exit, so the host's restart policy (e.g. Render) can retry cleanly.
+bot.start().catch((err) => {
+  console.error('Bot stopped:', err.message);
+  process.exit(1);
+});
 console.log('DevMorphix Ops bot started.');
