@@ -6,6 +6,7 @@ import { google } from 'googleapis';
 
 const SHEET_ID = process.env.SHEET_ID;
 const KEY_PATH = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH;
+const KEY_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_JSON;
 
 const PEOPLE_SHEET = 'People';
 const TASKS_SHEET = 'Tasks';
@@ -22,16 +23,26 @@ export const STATUS = {
 
 let sheetsClientPromise = null;
 
+// Local dev points GOOGLE_SERVICE_ACCOUNT_KEY_PATH at a JSON file on disk.
+// Hosts with no persistent/writable filesystem for secrets (Railway, Render,
+// etc.) instead get the key's full JSON contents pasted directly into
+// GOOGLE_SERVICE_ACCOUNT_KEY_JSON as an env var — either works.
+function loadServiceAccountKey() {
+  if (KEY_JSON) return JSON.parse(KEY_JSON);
+  if (KEY_PATH) return JSON.parse(fs.readFileSync(KEY_PATH, 'utf8'));
+  throw new Error(
+    'Set GOOGLE_SERVICE_ACCOUNT_KEY_JSON (the key file\'s full contents) or ' +
+      'GOOGLE_SERVICE_ACCOUNT_KEY_PATH (a local file path) — see .env.example'
+  );
+}
+
 function getSheetsClient() {
   if (!sheetsClientPromise) {
     sheetsClientPromise = (async () => {
-      if (!KEY_PATH) {
-        throw new Error('GOOGLE_SERVICE_ACCOUNT_KEY_PATH is not set (see .env.example)');
-      }
       if (!SHEET_ID) {
         throw new Error('SHEET_ID is not set (see .env.example)');
       }
-      const key = JSON.parse(fs.readFileSync(KEY_PATH, 'utf8'));
+      const key = loadServiceAccountKey();
       const auth = new google.auth.JWT({
         email: key.client_email,
         key: key.private_key,

@@ -112,6 +112,33 @@ bot.** If `/assign @bob ...` is used before Bob has `/start`ed, the bot
 tells the assigner Bob isn't registered yet and to ask him to `/start`
 first.
 
+## Deploy the bot (Railway)
+
+`bot/index.js` is a long-running process — an open Telegram long-poll
+connection, a `node-cron` schedule for the evening check-in, and in-memory
+state that only survives while the process stays up. That rules out
+Cloudflare Workers and Vercel (both spin functions up per-request and kill
+them after — no persistent background loop); it needs a host that keeps a
+Node process running continuously. [Railway](https://railway.app) is a good
+fit: push-to-deploy from GitHub, a real free tier, simple env-var UI.
+
+1. Push this repo to GitHub (see below) if you haven't already.
+2. In Railway: **New Project → Deploy from GitHub repo** → pick this repo.
+3. **Settings → Root Directory** → set to `bot`. Railway auto-detects
+   `npm start` from `package.json`.
+4. **Variables** → add every var from `bot/.env.example`:
+   - `BOT_TOKEN`, `SHEET_ID`, `GEMINI_API_KEY` (and `GEMINI_MODEL`,
+     `CHECKIN_CRON` if you want non-default values)
+   - For the service account key, use `GOOGLE_SERVICE_ACCOUNT_KEY_JSON`
+     (paste the full contents of `bot/service-account.json`) — **not**
+     `GOOGLE_SERVICE_ACCOUNT_KEY_PATH`, since Railway has no file there to
+     point at.
+5. Deploy. Check the logs for `DevMorphix Ops bot started.` with no errors.
+
+Only ever run **one** instance of the bot at a time — Telegram rejects a
+second long-poll connection with a 409 conflict, so if you deploy to
+Railway, stop any local `npm start` copy first.
+
 ## AI features
 
 **Free-text understanding (bot, always on once `GEMINI_API_KEY` is set):**
@@ -200,7 +227,8 @@ build settings.
 | Variable | Where | Purpose |
 |---|---|---|
 | `BOT_TOKEN` | `bot/.env` | Telegram bot token from BotFather |
-| `GOOGLE_SERVICE_ACCOUNT_KEY_PATH` | `bot/.env` | Path to the service account JSON key |
+| `GOOGLE_SERVICE_ACCOUNT_KEY_PATH` | `bot/.env` | Path to the service account JSON key (local dev) |
+| `GOOGLE_SERVICE_ACCOUNT_KEY_JSON` | `bot/.env` or Railway var | The key file's full JSON contents, for hosts with no file to point at |
 | `SHEET_ID` | `bot/.env`, Worker secret | The Google Sheet's ID — a Worker secret, not a `[vars]` entry, so it isn't exposed in a public repo |
 | `GOOGLE_SERVICE_ACCOUNT_EMAIL` | Worker secret | Same service account, email only |
 | `GOOGLE_PRIVATE_KEY` | Worker secret | Same service account, `private_key` field |
