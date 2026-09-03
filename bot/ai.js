@@ -10,7 +10,7 @@ import * as sheetsApi from './sheets.js';
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.7-flash';
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-const WRITE_TOOLS = new Set(['propose_status_update', 'propose_create_task']);
+const WRITE_TOOLS = new Set(['propose_status_update', 'propose_create_tasks']);
 
 const toolDeclarations = [
   {
@@ -64,17 +64,29 @@ const toolDeclarations = [
   },
   {
     type: 'function',
-    name: 'propose_create_task',
+    name: 'propose_create_tasks',
     description:
-      'Propose creating a new task for a named teammate. ' +
-      'This does NOT create the task — it only records a proposal the user must confirm.',
+      'Propose creating one or more new tasks. If the message describes several distinct action ' +
+      'items — for the same person or different people — include one entry per task in a single ' +
+      'call; never merge separate action items into one task description, and never call this tool ' +
+      'more than once for the same message. This does NOT create anything — it only records a ' +
+      'proposal the user must confirm.',
     parameters: {
       type: 'object',
       properties: {
-        description: { type: 'string' },
-        assignedToName: { type: 'string', description: "The teammate's registered name" },
+        tasks: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              description: { type: 'string' },
+              assignedToName: { type: 'string', description: "The teammate's registered name" },
+            },
+            required: ['description', 'assignedToName'],
+          },
+        },
       },
-      required: ['description', 'assignedToName'],
+      required: ['tasks'],
     },
   },
 ];
@@ -109,8 +121,9 @@ async function executeReadTool(name, args, caller) {
 }
 
 // Returns either { type: 'text', text } for a direct reply, or
-// { type: 'status_update' | 'create_task', params } for a write proposal
-// that bot/index.js must confirm with the user before touching the Sheet.
+// { type: 'status_update', params } / { type: 'create_tasks', params: { tasks } }
+// for a write proposal that bot/index.js must confirm with the user before
+// touching the Sheet.
 export async function interpretMessage(ctx, text) {
   const caller = await sheetsApi.getPersonByChatId(ctx.from.id);
   const systemPrompt = [
@@ -120,8 +133,10 @@ export async function interpretMessage(ctx, text) {
       : 'The person messaging you is NOT registered yet — if they ask to change or create a task, ' +
         'tell them to send /start to this bot first, and do not call any tool.',
     'For questions, use the read tools (list_my_tasks, find_task, list_team_tasks) and answer briefly.',
-    'For a status change or new task, call the matching propose_* tool — never claim you made the ' +
-      'change yourself; the user still has to confirm it.',
+    'For a status change or new task(s), call the matching propose_* tool — never claim you made the ' +
+      'change yourself; the user still has to confirm it. If the message lists multiple separate ' +
+      'tasks (e.g. "tell Bob to fix the header and ask Alice to update the docs"), pass all of them ' +
+      'as separate entries in one propose_create_tasks call.',
   ].join('\n');
 
   let interaction = await ai.interactions.create({
@@ -137,7 +152,7 @@ export async function interpretMessage(ctx, text) {
 
     if (WRITE_TOOLS.has(fcStep.name)) {
       return {
-        type: fcStep.name === 'propose_status_update' ? 'status_update' : 'create_task',
+        type: fcStep.name === 'propose_status_update' ? 'status_update' : 'create_tasks',
         params: fcStep.arguments,
       };
     }
@@ -159,6 +174,21 @@ export async function interpretMessage(ctx, text) {
   }
 
   return { type: 'text', text: interaction.output_text || "Sorry, I didn't quite catch that." };
+}
+
+// Voice messages: Gemini accepts audio input directly, so this is a plain
+// transcription call — the resulting text is then run through the exact
+// same interpretMessage/interpretCheckInReply paths as typed text, rather
+// than duplicating tool-calling logic for audio.
+export async function transcribeVoice(audioBase64, mimeType) {
+  const interaction = await ai.interactions.create({
+    model: GEMINI_MODEL,
+    input: [
+      { type: 'audio', data: audioBase64, mime_type: mimeType },
+      { type: 'text', text: 'Transcribe this voice message to plain text. Reply with only the transcription, nothing else.' },
+    ],
+  });
+  return (interaction.output_text || '').trim();
 }
 
 // Evening check-in: interprets a free-text reply against a specific person's

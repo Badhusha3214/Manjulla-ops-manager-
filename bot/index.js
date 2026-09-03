@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { Bot, InlineKeyboard } from 'grammy';
 import cron from 'node-cron';
 import * as sheetsApi from './sheets.js';
-import { interpretMessage, interpretCheckInReply } from './ai.js';
+import { interpretMessage, interpretCheckInReply, transcribeVoice } from './ai.js';
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 if (!BOT_TOKEN) {
@@ -230,12 +230,11 @@ bot.callbackQuery(/^status:(\d+):(in_progress|done|blocked)$/, async (ctx) => {
 });
 
 // ---- Free text: AI-assisted status updates / task creation / Q&A --------
-// Registered after the /command handlers, so it only sees text that no
-// command matched. Any write Gemini proposes is held in pendingAiAction and
-// only applied once the user taps the confirmation button below.
-bot.on('message:text', async (ctx) => {
-  const text = ctx.message.text.trim();
-
+// Shared by typed messages and transcribed voice notes (see message:voice
+// below) — a spoken "mark it done" goes through the exact same
+// pendingBlockReason / pendingCheckIn / interpretMessage logic as if it had
+// been typed, so a write still needs the same Yes/No confirm either way.
+async function handleUserText(ctx, text) {
   // A pending "why is it blocked?" question takes priority over everything
   // else — the very next message is treated as the reason, whatever it says.
   const blockReason = pendingBlockReason.get(ctx.from.id);
@@ -342,25 +341,71 @@ bot.on('message:text', async (ctx) => {
     return;
   }
 
-  if (result.type === 'create_task') {
-    const { description, assignedToName } = result.params;
-    const assignee = await sheetsApi.getPersonByName(assignedToName);
-    if (!assignee) {
+  if (result.type === 'create_tasks') {
+    const { tasks } = result.params;
+    const from = await sheetsApi.getPersonByChatId(ctx.from.id);
+    const assignedByName = from ? from.name : displayNameFor(ctx.from);
+
+    const resolved = [];
+    const unregistered = new Set();
+    for (const t of tasks) {
+      const assignee = await sheetsApi.getPersonByName(t.assignedToName);
+      if (!assignee) {
+        unregistered.add(t.assignedToName);
+        continue;
+      }
+      resolved.push({ description: t.description, assignee });
+    }
+
+    if (resolved.length === 0) {
       await ctx.reply(
-        `${assignedToName} isn't registered with me yet. Ask them to send /start to this bot once, then try again.`
+        `${[...unregistered].join(', ')} isn't registered with me yet. Ask them to send /start to this bot once, then try again.`
       );
       return;
     }
-    const from = await sheetsApi.getPersonByChatId(ctx.from.id);
-    const assignedByName = from ? from.name : displayNameFor(ctx.from);
+
     pendingAiAction.set(ctx.from.id, {
-      type: 'create_task',
-      params: { description, assignedByName, assignee },
+      type: 'create_tasks',
+      params: { tasks: resolved, assignedByName },
       expiresAt: Date.now() + AI_ACTION_TTL_MS,
     });
-    await ctx.reply(`Create task "${description}" for ${assignee.name}?`, { reply_markup: aiConfirmKeyboard() });
+
+    let prompt =
+      resolved.length === 1
+        ? `Create task "${resolved[0].description}" for ${resolved[0].assignee.name}?`
+        : `Create these ${resolved.length} tasks?\n` +
+          resolved.map((t) => `• "${t.description}" → ${t.assignee.name}`).join('\n');
+    if (unregistered.size > 0) {
+      prompt += `\n\n(Skipping — not registered yet: ${[...unregistered].join(', ')})`;
+    }
+    await ctx.reply(prompt, { reply_markup: aiConfirmKeyboard() });
     return;
   }
+}
+
+// Registered after the /command handlers, so it only sees text that no
+// command matched.
+bot.on('message:text', (ctx) => handleUserText(ctx, ctx.message.text.trim()));
+
+// ---- Voice messages: transcribe, then run through the same pipeline -----
+// Telegram voice notes are OGG/Opus; Gemini accepts that mime type directly.
+// The transcript is echoed back before acting on it, since a misheard word
+// could otherwise mark the wrong task — the existing Yes/No confirm on any
+// AI-proposed write is a second backstop on top of that.
+bot.on('message:voice', async (ctx) => {
+  const { file_id, mime_type } = ctx.message.voice;
+  const file = await ctx.api.getFile(file_id);
+  const res = await fetch(`https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`);
+  const audioBase64 = Buffer.from(await res.arrayBuffer()).toString('base64');
+
+  const transcript = await transcribeVoice(audioBase64, mime_type || 'audio/ogg');
+  if (!transcript) {
+    await ctx.reply("Sorry, I couldn't make out that voice message — try again, or type it instead.");
+    return;
+  }
+
+  await ctx.reply(`🎙️ Heard: "${transcript}"`);
+  await handleUserText(ctx, transcript);
 });
 
 bot.callbackQuery(/^ai_confirm:(yes|no)$/, async (ctx) => {
@@ -390,9 +435,14 @@ bot.callbackQuery(/^ai_confirm:(yes|no)$/, async (ctx) => {
     return;
   }
 
-  if (pending.type === 'create_task') {
-    await ctx.editMessageText(`Creating "${pending.params.description}" for ${pending.params.assignee.name}...`);
-    await createAndDispatchTask(ctx, pending.params);
+  if (pending.type === 'create_tasks') {
+    const { tasks, assignedByName } = pending.params;
+    await ctx.editMessageText(
+      tasks.length > 1 ? `Creating ${tasks.length} tasks...` : `Creating "${tasks[0].description}" for ${tasks[0].assignee.name}...`
+    );
+    for (const { description, assignee } of tasks) {
+      await createAndDispatchTask(ctx, { description, assignedByName, assignee });
+    }
     return;
   }
 

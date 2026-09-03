@@ -156,6 +156,13 @@ propose a status change / new task. Proposed writes always show a Yes/No
 button first; nothing is written to the Sheet until you confirm. See
 `bot/ai.js`.
 
+**Voice messages (bot, always on once `GEMINI_API_KEY` is set):** send a
+Telegram voice note instead of typing — the bot transcribes it with Gemini,
+echoes back what it heard, then runs the transcript through the exact same
+free-text pipeline as typed messages (status updates, task creation, Q&A,
+block-reason replies, evening check-in replies). Any proposed write still
+needs the usual Yes/No confirm. See `bot/ai.js`'s `transcribeVoice`.
+
 **Scheduled reminders (Worker cron, always on once deployed):** once a day
 (`STALE_DAYS`, default 3, and the cron hour are set in `worker/wrangler.toml`)
 the Worker checks for `Pending`/`In Progress` tasks that haven't been
